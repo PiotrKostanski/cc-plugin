@@ -10,7 +10,7 @@
     {
       "name": "cc-plugin",
       "source": "./",
-      "description": "A scaffold Claude Code plugin demonstrating skills, agents, hooks, an MCP server, and an output style."
+      "description": "macOS developer toolchain diagnostics for Claude Code, plus a scaffold demonstrating skills, agents, hooks, an MCP server, and an output style."
     }
   ]
 }

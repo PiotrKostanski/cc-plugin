@@ -1,8 +1,43 @@
 # cc-plugin
 
-A scaffold for a [Claude Code](https://docs.claude.com/en/docs/claude-code) plugin. It
-includes a working example of every component type plugins support, so you can delete
-what you don't need and build out the rest.
+A [Claude Code](https://code.claude.com/docs) plugin providing **`macos-doctor`**, a read-only
+agent that diagnoses macOS developer toolchain problems. It doubles as a scaffold: it includes
+a working example of every component type plugins support, so you can delete what you don't
+need and build out the rest.
+
+## macos-doctor
+
+Finds out *why* your Mac's toolchain is misbehaving and gives you the exact fix — without
+changing anything itself. It covers:
+
+- **PATH shadowing** — which binary actually wins, and every one it beat
+- **Architecture mismatches** — arm64 vs x86_64, Rosetta translation, a stray `/usr/local`
+  Homebrew shadowing `/opt/homebrew`
+- **Version managers** — pyenv/rbenv/nvm/fnm/mise/asdf shims installed but losing to Homebrew,
+  or init lines in a startup file that doesn't load
+- **Shell startup ordering** — why your editor and Finder-launched apps see a different PATH
+  than Terminal
+- **Homebrew health**, **Xcode/CLT state**, and macOS **system stubs** (`/usr/bin/ruby`,
+  `/usr/bin/java`) beating real installs
+
+Ask it directly, or let Claude route to it:
+
+```
+@agent-cc-plugin:macos-doctor why does python3 not use my pyenv version?
+```
+
+It reports findings ranked Critical/Warning/Note, each with the command it ran, that command's
+real output, and a copy-pasteable fix. It never installs, uninstalls, `sudo`s, or edits your
+dotfiles — see [read-only enforcement](docs/custom-agents.md#hardening-recipe-real-read-only-enforcement)
+for how far that guarantee goes and how to harden it.
+
+With `memory: user` it keeps a per-machine baseline in
+`~/.claude/agent-memory/cc-plugin-macos-doctor/`, so repeat runs skip re-deriving your setup and
+stop re-flagging quirks you've confirmed are intentional.
+
+[**docs/custom-agents.md**](docs/custom-agents.md) documents the full custom-subagent capability
+surface — every frontmatter field, the three that plugin agents refuse, and the background tool
+filtering that trips people up.
 
 ## What's included
 
@@ -10,8 +45,8 @@ what you don't need and build out the rest.
 |-----------------|----------------------------------|-------|
 | Manifest        | `.claude-plugin/plugin.json`     | Plugin metadata |
 | Marketplace     | `.claude-plugin/marketplace.json`| Lets this repo self-host for local install/testing |
+| **Agent**       | `agents/macos-doctor.md`         | macOS toolchain diagnostics, `cc-plugin:macos-doctor` |
 | Skill           | `skills/example-skill/SKILL.md`  | Invoked as `/cc-plugin:example-skill` or by the model |
-| Agent           | `agents/example-agent.md`        | Subagent, invoked as `cc-plugin:example-agent` |
 | Hook            | `hooks/hooks.json`, `scripts/example-hook.sh` | `SessionStart` hook example |
 | MCP server      | `.mcp.json`                      | Example stdio server (filesystem reference server) |
 | Output style    | `output-styles/example-style.md` | Example output style |
@@ -55,8 +90,8 @@ at itself, so you can exercise the real install path end-to-end:
 ## Customizing
 
 1. Update `.claude-plugin/plugin.json` — `name`, `description`, `author`, `repository`.
-2. Replace or remove `skills/example-skill/`, `agents/example-agent.md`,
-   `output-styles/example-style.md`.
+2. Replace or remove `skills/example-skill/` and `output-styles/example-style.md`. For a new
+   agent, `docs/custom-agents.md` has the annotated field reference.
 3. Point `.mcp.json` at a real MCP server, or delete it if the plugin doesn't need one.
 4. Edit `hooks/hooks.json` and `scripts/example-hook.sh`, or delete both if you don't
    need hooks.
@@ -64,6 +99,8 @@ at itself, so you can exercise the real install path end-to-end:
 
 ## Reference
 
-- Plugin docs: https://docs.claude.com/en/docs/claude-code/plugins
-- Plugin marketplaces: https://docs.claude.com/en/docs/claude-code/plugin-marketplaces
-- Hooks: https://docs.claude.com/en/docs/claude-code/hooks
+- Custom subagents: https://code.claude.com/docs/en/sub-agents
+- Plugins: https://code.claude.com/docs/en/plugins
+- Plugins reference: https://code.claude.com/docs/en/plugins-reference
+- Plugin marketplaces: https://code.claude.com/docs/en/plugin-marketplaces
+- Hooks: https://code.claude.com/docs/en/hooks
