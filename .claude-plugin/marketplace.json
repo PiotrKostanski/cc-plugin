@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "cc-plugin-marketplace",
+  "owner": {
+    "name": "Piotr Kostański",
+    "email": "kostanski.piotr@gmail.com"
+  },
+  "description": "Local marketplace for testing the cc-plugin scaffold.",
+  "plugins": [
+    {
+      "name": "cc-plugin",
+      "source": "./",
+      "description": "macOS developer toolchain diagnostics for Claude Code, plus a scaffold demonstrating skills, agents, hooks, an MCP server, and an output style."
+    }
+  ]
+}

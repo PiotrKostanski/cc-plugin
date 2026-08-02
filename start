@@ -1,0 +1,198 @@
+#!/usr/bin/env zsh
+#
+# start — launch Claude Code with this plugin inlined via --plugin-dir.
+#
+# Preflights the things that fail silently, then waits for confirmation:
+#   1. Claude Code   version, auto-update state, installation/settings issues
+#   2. auth          signed in, which account and plan
+#   3. rtk           installed, correct binary, hook registered, savings so far
+#
+#   y / Enter   launch
+#   n / Esc     abort
+#
+# Any arguments are passed through to claude:
+#   ./start
+#   ./start -p "list your available agents"
+#   ./start --model haiku
+#
+# Environment:
+#   START_YES=1   skip the confirmation prompt
+#
+# zsh, not bash: detecting a bare Esc requires a sub-second `read -t`, which
+# macOS's bash 3.2 rejects ("invalid timeout specification").
+
+emulate -L zsh
+set -uo pipefail
+
+ROOT=${0:A:h}
+
+if [[ -t 1 ]]; then
+  C_DIM=$'\e[2m'; C_WARN=$'\e[33m'; C_OK=$'\e[32m'; C_BOLD=$'\e[1m'; C_OFF=$'\e[0m'
+else
+  C_DIM=''; C_WARN=''; C_OK=''; C_BOLD=''; C_OFF=''
+fi
+
+warn=0
+
+# Report a problem: what's wrong, and the command that fixes it.
+say_warn() {
+  warn=1
+  print -r -- "${C_WARN}⚠  $1${C_OFF}"
+  [[ -n ${2-} ]] && print -r -- "${C_DIM}   fix: $2${C_OFF}"
+  return 0
+}
+
+say_ok() { print -r -- "${C_OK}✓${C_OFF}  $1"; }
+
+strip_ansi() { sed -E $'s/\e\\[[0-9;]*[a-zA-Z]//g'; }
+
+# Flat-JSON field reader — avoids depending on jq or python3.
+json_get() { grep -o "\"$1\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" | sed -E 's/.*: *"(.*)"/\1/'; }
+json_bool() { grep -o "\"$1\"[[:space:]]*:[[:space:]]*[a-z]*" | sed -E 's/.*: *//'; }
+
+# ── 1. Claude Code installation ──────────────────────────────────────────────
+check_claude() {
+  local doctor version autoupd lastupd
+  if ! doctor=$(claude doctor 2>&1 | strip_ansi); then
+    say_warn "'claude doctor' failed — installation may be broken." "claude install stable"
+    return
+  fi
+
+  version=${${(M)${(f)doctor}:#Running:*}#Running: }
+  autoupd=${${(M)${(f)doctor}:#Auto-updates:*}#Auto-updates: }
+  lastupd=${${(M)${(f)doctor}:#Last update attempt:*}#Last update attempt: }
+
+  say_ok "claude ${C_BOLD}${version:-unknown}${C_OFF}${lastupd:+ ${C_DIM}· updated ${lastupd##*→ }${C_OFF}}"
+
+  # Auto-updates off means nothing will tell you a new version exists.
+  if [[ $autoupd != enabled ]]; then
+    say_warn "auto-updates are ${autoupd:-off} — you will not be told when a new version ships." \
+             "claude update"
+  elif [[ $lastupd == fail* ]]; then
+    say_warn "the last auto-update attempt failed: $lastupd" "claude update"
+  fi
+
+  if [[ -z ${(M)${(f)doctor}:#*No installation issues found*} ]]; then
+    say_warn "'claude doctor' reports installation issues." "claude doctor"
+  fi
+
+  # Malformed settings/.mcp.json load silently degraded, so surface them here.
+  if [[ -n ${(M)${(f)doctor}:#Invalid settings*} ]]; then
+    say_warn "invalid settings detected:" "claude doctor"
+    print -r -- "$doctor" | sed -n '/Invalid settings/,/^$/p' | sed '1d;/^$/d' \
+      | sed "s/^/${C_DIM}   /;s/\$/${C_OFF}/"
+  fi
+}
+
+# ── 2. Authentication ────────────────────────────────────────────────────────
+check_auth() {
+  # NB: `status` is a read-only special parameter in zsh — do not use it here.
+  local auth_json logged_in email plan method
+  if ! auth_json=$(claude auth status --json 2>/dev/null); then
+    say_warn "could not read auth status." "claude auth login"
+    return
+  fi
+
+  logged_in=$(print -r -- "$auth_json" | json_bool loggedIn)
+  if [[ $logged_in != true ]]; then
+    say_warn "not signed in to Claude Code." "claude auth login"
+    return
+  fi
+
+  email=$(print -r -- "$auth_json" | json_get email)
+  plan=$(print -r -- "$auth_json" | json_get subscriptionType)
+  method=$(print -r -- "$auth_json" | json_get authMethod)
+  say_ok "auth ${C_BOLD}${email:-signed in}${C_OFF}${plan:+ ${C_DIM}(${plan}${method:+, $method})${C_OFF}}"
+}
+
+# ── 3. rtk ───────────────────────────────────────────────────────────────────
+# First failing check wins.
+check_rtk() {
+  if ! command -v rtk >/dev/null 2>&1; then
+    say_warn "rtk is not installed — bash output is not being token-filtered." \
+             "brew install rtk"
+    return
+  fi
+
+  # `rtk gain` is the discriminator for the name collision: reachingforthejack/rtk
+  # (Rust Type Kit) is a different tool with no `gain` subcommand.
+  if ! rtk gain >/dev/null 2>&1; then
+    say_warn "'rtk' on PATH is not the token-killer — likely reachingforthejack/rtk (Rust Type Kit)." \
+             "check 'which -a rtk' and put the right binary first"
+    print -r -- "${C_DIM}   $(which -a rtk | paste -sd' ' -)${C_OFF}"
+    return
+  fi
+
+  # Match verify's output line, not its exit code — verify also runs the TOML
+  # filter test suite, so its status reflects more than hook registration.
+  local verify_out
+  verify_out=$(rtk verify 2>&1)
+  if [[ -z ${(M)${(f)verify_out}:#PASS*hook registered*} ]]; then
+    say_warn "rtk is installed but its Claude Code hook is not registered — no filtering will happen." \
+             "rtk init --global"
+    return
+  fi
+
+  # Healthy: project-scope savings, without the per-command table. A directory
+  # with no history reports nothing useful, so fall back to lifetime totals.
+  local gain
+  gain=$(rtk gain -p 2>/dev/null | awk '/^By Command/{exit} {print}')
+  if [[ -n ${(M)${(f)gain}:#*No tracking data*} ]]; then
+    gain=$(rtk gain 2>/dev/null | awk '/^By Command/{exit} {print}')
+  fi
+  print -r -- ""
+  print -r -- "$gain"
+}
+
+check_claude
+check_auth
+check_rtk
+
+print -r -- ""
+print -r -- "${C_BOLD}cc-plugin${C_OFF} → --plugin-dir ${C_DIM}(inlined)${C_OFF}"
+print -r -- "${C_DIM}$ROOT${C_OFF}"
+print -r -- ""
+
+# y/Enter launch, n/Esc abort, anything else re-prompts. A warning changes what
+# is displayed, never what a key does.
+confirm() {
+  local key rest
+  while true; do
+    print -n -- "Launch claude${${warn:#0}:+ anyway}? [Y/n] "
+    if ! read -s -k 1 key; then
+      print -r -- ""
+      return 1
+    fi
+
+    if [[ $key == $'\e' ]]; then
+      # Esc also prefixes arrow keys etc.; if bytes follow, it's a sequence.
+      rest=''
+      read -s -k 2 -t 0.01 rest 2>/dev/null
+      if [[ -z $rest ]]; then
+        print -r -- "esc"
+        return 1
+      fi
+      print -r -- ""
+      continue
+    fi
+
+    case $key in
+      $'\n'|$'\r'|'') print -r -- "yes"; return 0 ;;
+      y|Y)            print -r -- "y";   return 0 ;;
+      n|N)            print -r -- "n";   return 1 ;;
+      *)              print -r -- "";    continue ;;
+    esac
+  done
+}
+
+if [[ -n ${START_YES-} ]]; then
+  :
+elif [[ ! -t 0 ]]; then
+  print -r -- "${C_DIM}stdin is not a tty — skipping confirmation${C_OFF}"
+elif ! confirm; then
+  print -r -- "${C_DIM}aborted${C_OFF}"
+  exit 130
+fi
+
+print -r -- ""
+exec claude --plugin-dir "$ROOT" "$@"
