@@ -2,7 +2,7 @@
   "mcpServers": {
     "cc-plugin-example": {
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "${CLAUDE_PROJECT_DIR}"]
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "."]
     }
   }
 }
